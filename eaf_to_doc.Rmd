@@ -1,0 +1,131 @@
+---
+title: "Abaza eafs to docs for Petya"
+output: html_notebook
+---
+Based on Garik's script `extract_glosses_from_eafs.R`
+
+```{r}
+library(tidyverse)
+library(phonfieldwork)
+```
+
+```{r}
+# read all eafs into df ---------------------------------------------------
+setwd("/Users/apanova/NorthwestCaucasian/Abaza/Corpus/ELANS_new_texts/eafs_for_r")
+df <- map_dfr(list.files(), phonfieldwork::eaf_to_df)
+#setwd("/Users/apanova/NorthwestCaucasian/Abaza/Corpus/ELANS_new_texts/results")
+```
+
+
+
+```{r}
+# create correspondences of word, gloss and their source ------------------
+df %>% 
+  filter(str_detect(tier_name, "(Gloss-gls)|(Morph_orth)")) %>% 
+  arrange(id, time_start) %>% 
+  mutate(tier_name = str_extract(tier_name, "(Gloss-gls)|(Morph_orth)")) %>%   
+  arrange(source, time_start, time_end) %>% 
+  mutate(glosses = lead(content)) %>% 
+  select(content, glosses, tier_name, time_start, time_end, source) %>% 
+  
+  #Nastya: choose this line for the texts FizikovMM_20210503_pears_an_gloss and JimakulovZM_20210505_hojastory_an_gloss
+  #filter(tier_name == "Gloss-gls") %>% 
+  
+  #Nastya: for all other texts choose this line
+  filter(tier_name == "Morph_orth") %>% 
+
+  
+  select(-tier_name) -> result
+```
+
+
+
+
+```{r}
+df %>% 
+  filter(str_detect(tier_name, "(Gloss-gls)|(Morph_trans)")) %>% 
+  arrange(id, time_start) %>% 
+  mutate(tier_name = str_extract(tier_name, "(Gloss-gls)|(Morph_trans)")) %>%   
+  arrange(source, time_start, time_end) %>% 
+  mutate(glosses = lead(content)) %>% 
+  select(content, glosses, tier_name, time_start, time_end, source) %>% 
+  filter(tier_name == "Morph_trans") %>% 
+  select(-tier_name) %>% 
+  rename(transcription = content) %>% 
+  select(transcription) %>% 
+  bind_cols(result)->
+  result
+```
+
+```{r}
+df %>% 
+  filter(str_detect(tier_name, "(Translation)")) %>% 
+  mutate(translation = content) %>% 
+  select(source, time_start, time_end, translation) %>% 
+  left_join(result) %>% 
+  write_csv("word_gloss_corresp.csv")
+```
+
+
+```{r}
+# create document ---------------------------------------------------------
+df <- read_csv("word_gloss_corresp.csv")
+```
+```{r}
+df %>% 
+  group_by(source) %>% 
+  mutate(time = str_c(time_start, "-", time_end),
+         sentence_id = str_c(time, source),
+         sentence_id = as.double(factor(sentence_id, levels = unique(sentence_id)))) %>% 
+  group_by(source, time, sentence_id, translation) %>% 
+  summarise(content = str_c(content, collapse = "\t"),
+            transcription = str_c(transcription, collapse = "\t"),
+            glosses = str_c(glosses, collapse = "\t")) %>% 
+  arrange(source, sentence_id) ->
+  par_for_docx
+```
+
+
+```{r}
+library(officer)
+result_doc <- read_docx()
+```
+
+```{r}
+# Nastya: I added the next two lines because without them the texts and lines in the resulted doc were in the reverse order
+par_for_docx <- apply(par_for_docx, 2, rev)
+par_for_docx <- as.data.frame(par_for_docx)
+```
+
+```{r}
+silence <- map(unique(par_for_docx$source), function(j){
+  print(j)
+  result_doc %>% 
+    body_add_par(j, style = "heading 1") ->
+    result_doc
+  
+  par_for_docx %>% 
+    filter(source == j) ->
+    one_document
+  
+  silence <- map(seq_along(one_document$source), function(i){
+    result_doc %>% 
+      body_add_par(str_c(one_document$sentence_id[i], " ", one_document$time[i]), style = "heading 2") %>% 
+      #Nastya: for the texts the texts FizikovMM_20210503_pears_an_gloss and JimakulovZM_20210505_hojastory_an_gloss the order of the next operations should be changed, so that the order of lines within examples would be correct
+      body_add_par(one_document$content[i], style = "Normal") %>% 
+      body_add_par("", style = "Normal") %>%
+      body_add_par(one_document$transcription[i], style = "Normal") %>% 
+      body_add_par("", style = "Normal") %>%
+      body_add_par(one_document$glosses[i], style = "Normal") %>% 
+      body_add_par("", style = "Normal") %>%
+      body_add_par(one_document$translation[i], style = "Normal") %>% 
+      body_add_par("", style = "Normal") ->
+      result_doc
+  })
+})  
+```
+
+```{r}
+print(result_doc, target = "test.docx")
+```
+
